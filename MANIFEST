@@ -1,0 +1,13 @@
+CHANGES
+COPYING
+GoogleWhack.pm
+MANIFEST
+Makefile.PL
+README
+bin/check2words4googlewhack.pl
+bin/check_dict4googlewhack.pl
+t/url_to_domain.t
+t/is_googlewhack.t
+t/is_in_dictionary.t
+t/num_google_results.t
+t/urls.t
