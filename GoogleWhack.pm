@@ -1,5 +1,5 @@
-# $Revision: 1.3 $
-# $Id: GoogleWhack.pm,v 1.3 2002/02/24 10:32:08 afoxson Exp $
+# $Revision: 1.4 $
+# $Id: GoogleWhack.pm,v 1.4 2002/02/26 07:17:21 afoxson Exp $
 
 # Games::GoogleWhack
 # Copyright (c) 2002 Adam J. Foxson. All rights reserved.
@@ -20,29 +20,30 @@ use strict;
 use Carp;
 use LWP::UserAgent;
 use HTTP::Request;
-use vars qw($VERSION);
+use vars qw($VERSION %_DICT);
 
-($VERSION) = '$Revision: 1.3 $' =~ /\s+(\d+\.\d+)\s+/;
+($VERSION) = '$Revision: 1.4 $' =~ /\s+(\d+\.\d+)\s+/;
 
 local $^W;
 
 sub new
 {
 	my $type      = shift;
-	my $useragent = shift || 'Mozilla/5.0',
+	my $useragent = shift || 'Mozilla/5.0', # get the useragent string if sent
+	my $timeout   = shift || 180;
 	my $class     = ref($type) || $type;
 	my $self      =
 	{
-		_google_url      => 'http://www.google.com/search?q=',
-		_dictionary_url  => 'http://www.dictionary.com/search?q=',
 		_googlewhack_url => 'http://www.googlewhack.com/tally.pl',
+		_dictionary_url  => 'http://www.dictionary.com/search?q=',
+		_google_url      => 'http://www.google.com/search?q=',
 		_useragent       => undef,
 		errstr           => undef,
 	};
 
 	bless $self, $class;
 
-	$self->_useragent($useragent);
+	$self->_useragent($useragent, $timeout);
 
 	return $self;
 }
@@ -62,12 +63,15 @@ sub _url_to_domain
 	}
 }
 
+# check if two words are indeed a googlewhack by verifying the words comply
+# with rules one and two from http://www.googlewhack.com/rules.htm
 sub is_googlewhack
 {
 	my $self     = shift;
 	my @words    = @_;
 	my @unlisted = ();
 
+	# check to see if both words are listed in dictionary.com
 	for my $word (@words)
 	{
 		unless ($self->is_in_dictionary($word))
@@ -79,6 +83,7 @@ sub is_googlewhack
 
 	return (undef, \@unlisted, undef) if @unlisted;
 
+	# check to see if the googlefactors yield one google result
 	my $results = $self->num_google_results(@words);
 	croak $self->errstr if $self->errstr;
 
@@ -105,12 +110,13 @@ sub _set_errstr
 
 sub _useragent
 {
-	my ($self, $useragent) = @_;
+	my ($self, $useragent, $timeout) = @_;
 
 	unless (defined $self->{_useragent})
 	{
 		my $ua = LWP::UserAgent->new;
 		$ua->agent($useragent);
+		$ua->timeout($timeout);
 
 		$self->{_useragent} = $ua;
 	}
@@ -147,20 +153,53 @@ sub _dictionary_url
 
 sub submit_to_googlewhack
 {
-	croak "submit_to_googlewhack needs 5 arguments" unless scalar @_ == 6;
+	my $self = shift;
 
-	my $self                                   = shift;
-	my ($word1, $word2, $name, $country, $url) = @_;
-    my $ua                                     = $self->_useragent;
-    my $request                                = new HTTP::Request 'POST';
+	croak "submit_to_googlewhack needs at least 2 named arguments"
+		unless scalar @_ >= 4;
+	croak "submit_to_googlewhack needs an even number of named arguments"
+		unless scalar @_ % 2 == 0;
 
-    $request->url($self->_googlewhack_url);
-    $request->content("whack=$word1+$word2&op=Stack&" .
-        "name=$name&country=$country&url=$url");
+	my %defaults =
+	(
+		word1    => undef,
+		word2    => undef,
+		name     => '',
+		country  => '',
+		url      => '',
+	);
+	my %params   = @_;
 
-    my $response = $ua->request($request);
+	# we're going to warn the user if they send us a param that we
+	# are unfamiliar with, this generally catches typoes.
+	for my $param (keys %params)
+	{   
+		croak "Parameter '$param' is invalid." if not exists $defaults{$param};
+	}
 
-    $self->_set_errstr('');
+	# take the params we were given and merge them over the defaults.
+	for my $param (keys %defaults)
+	{
+		$params{$param} = $defaults{$param} if not exists $params{$param};
+	}
+
+	# make sure we are getting the two mandatory named arguments
+	for my $param (qw(word1 word2))
+	{
+		croak "Parameter '$param' must be specified."
+			if not defined $params{$param};
+	}
+
+	my $ua      = $self->_useragent;
+	my $request = new HTTP::Request 'POST';
+
+	$request->url($self->_googlewhack_url);
+	$request->content("whack=$params{word1}+$params{word2}&op=Stack&" .
+		"name=$params{name}&country=$params{country}&url=$params{url}");
+
+	my $response = $ua->request($request);
+
+	$self->_set_errstr('');
 
 	if ($response->is_success)
 	{
@@ -188,6 +227,9 @@ sub submit_to_googlewhack
 sub is_in_dictionary
 {
 	my ($self, $word) = @_;
+
+	return $_DICT{$word} if defined $_DICT{$word};
+
 	my $ua            = $self->_useragent;
 	my $request       = HTTP::Request->new('GET',
 						$self->_dictionary_url . "$word");
@@ -199,9 +241,12 @@ sub is_in_dictionary
 	{
 		my $content = $response->content;
 
-		if ($content =~ /No entry found for/)   { return }
-		elsif ($content =~ /entries found for/) { return 1 }
-		elsif ($content =~ /entry found for/)   { return 1 }
+		if ($content =~ /No entry found for/)
+			{ $_DICT{$word} = 0 ; return }
+		elsif ($content =~ /entries found for/)
+			{ $_DICT{$word} = 1 ; return 1 }
+		elsif ($content =~ /entry found for/)
+			{ $_DICT{$word} = 1 ; return 1 }
 		else
 		{
 			$self->_set_errstr('Unrecognized response from ' .
@@ -261,8 +306,6 @@ sub num_google_results
 
 1;
 
-__DATA__
-
 __END__
 
 =head1 NAME
@@ -282,47 +325,55 @@ Games::GoogleWhack - Finds, verifies, and/or submits GoogleWhack's
 
 =head1 DESCRIPTION
 
-NOTE: THIS MODULE MAKES EXTERNAL CONNECTIONS TO GOOGLE.COM, DICTIONARY.COM,
-and/or GOOGLEWHACK.COM. IT IS THE USER'S RESPONSIBILITY TO ENSURE THAT THEY
-ARE IN COMPLIANCE WITH ANY RESPECTIVE TERMS OF USE CLAUSES FOR SITE USAGE.
-THE AUTHOR ASSUMES NO LIABILITY FOR THE USE OR MISUSE OF THIS SCRIPT.
+NOTE: THIS MODULE MAKES EXTERNAL CONNECTIONS TO GOOGLE.COM,
+DICTIONARY.COM, and/or GOOGLEWHACK.COM. IT IS THE USERS
+RESPONSIBILITY TO ENSURE THAT THEY ARE IN COMPLIANCE WITH ANY
+RESPECTIVE TERMS OF USE CLAUSES FOR SITE USAGE. THE AUTHOR
+ASSUMES NO LIABILITY FOR THE USE OR MISUSE OF THIS MODULE.
 
 Public Methods:
 
 B<new> (constructor)
 
-  gets one optional word as an argument that will be used as
-  the useragent, ie "Mozilla/5.0"
+  Gets two optional arguments. The first will be used as the
+  useragent, (defaults to "Mozilla/5.0"), and the second will be
+  used as the timeout value for outbound connections
+  (defaults to 180 seconds)
 
 B<is_googlewhack>
 
-  gets two mandatory words as arguments
-  returns true of undef if scalar context (use scalar context
+  Gets two mandatory words as arguments
+  Returns true of undef if scalar context (use scalar context
   only if you don't care why it failed if it returns undef),
   and returns results, unlisted words (array ref), and if it's
   a googlewhack in list context
+  Return response is reliable only if $obj->errstr is false
 
 B<is_in_dictionary>
 
-  get one mandatory word as an argument
-  returns false w/ error (error is in errstr), false w/o error
+  Get one mandatory word as an argument
+  Returns false w/ error (error is in errstr), false w/o error
   (word is not listed in dictionary.com), or true (word is in
   dictionary)
+  Return response is reliable only if $obj->errstr is false
 
 B<num_google_results>
 
-  gets two mandatory words as arguments
-  returns false w/ error (error is in errstr), false w/o error
+  Gets two mandatory words as arguments
+  Returns false w/ error (error is in errstr), false w/o error
   (word yielded no results on google), or true (number of google
   results)
+  Return response is reliable only if $obj->errstr is false
            
 B<submit_to_googlewhack>
 
-  gets 5 mandatory arguments: word, word, your name, your country,
-  your url returns true (added to googlewhack.com's whack stack
-  page), false w/ error (error is in errstr), or false w/o error
-  (not added to googlewhack.com's whack stack page; may have
-  already been added)
+  Gets 2 mandatory named arguments: word1, word2
+  Gets 3 optional named arguments: name, country, url
+  Returns true (added to googlewhack.com's whack stack page),
+  false w/ error (error is in errstr), or false w/o error (not
+  added to googlewhack.com's whack stack page; may have already
+  been added)
+  Return response is reliable only if $obj->errstr is false
 
 B<errstr>
 
@@ -334,13 +385,12 @@ See the README for the introduction.
 
 =head1 TODO
 
-  Add Memoization
   Add support for googlewhack.com's 3rd rule
   (result page can't be wordlist)
 
 =head1 CREDITS
 
-Thanks to Bob O'neill <Oneill.Bob@Grantstreet.com> for bug hunting,
+Thanks to Bob O'Neill <bobo@cpan.org> for bug hunting,
 beta testing, submission functionality, and various improvements.
 
 =head1 AUTHOR

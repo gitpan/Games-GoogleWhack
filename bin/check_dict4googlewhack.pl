@@ -1,13 +1,13 @@
 #!/usr/bin/perl -w
 
-# $Revision: 1.3 $
-# $Id: check_dict4googlewhack.pl,v 1.3 2002/02/24 10:32:10 afoxson Exp $
+# $Revision: 1.4 $
+# $Id: check_dict4googlewhack.pl,v 1.4 2002/02/26 07:17:22 afoxson Exp $
 
 # check_dict4googlewhack.pl - scans a dictionary for googlewhacks
 # Copyright (c) 2002 Adam J. Foxson. All rights reserved.
 
-# NOTE: THIS MODULE MAKES EXTERNAL CONNECTIONS TO GOOGLE.COM, DICTIONARY.COM,
-# and/or GOOGLEWHACK.COM. IT IS THE USER'S RESPONSIBILITY TO ENSURE THAT THEY
+# NOTE: THIS SCRIPT MAKES EXTERNAL CONNECTIONS TO GOOGLE.COM, DICTIONARY.COM,
+# and/or GOOGLEWHACK.COM. IT IS THE USERS RESPONSIBILITY TO ENSURE THAT THEY
 # ARE IN COMPLIANCE WITH ANY RESPECTIVE TERMS OF USE CLAUSES FOR SITE USAGE.
 # THE AUTHOR ASSUMES NO LIABILITY FOR THE USE OR MISUSE OF THIS SCRIPT.
 
@@ -99,8 +99,13 @@ OUTER: for my $word1 (sort {length $b <=> length $a} @dict)
 			else
 			{
 				my $submitted =
-					$googlewhack->submit_to_googlewhack($word1, $word2,
-						'Someone', 'Somewhere', '');
+					$googlewhack->submit_to_googlewhack
+					(
+						word1   => $word1,
+						word2   => $word2,
+						name    => 'Someone',
+						country => 'Somewhere',
+					);
 
 				die $googlewhack->errstr if $googlewhack->errstr;
 
